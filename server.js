@@ -1,21 +1,26 @@
 const express = require("express");
+const cron = require("node-cron");
 
 const app = express();
 app.use(express.json());
 
-const DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1515384597133660303/zskDPHYYGhnKF1rUngtG88IrejZwqaslw06TrQwuxuaksuJzXlQD2AuZhOyCqbL8fc-J";
+const DISCORD_WEBHOOK = "YOUR_WEBHOOK_HERE";
 const GROUP_ID = "15038532";
 
-const REQUIRED_PLAYTIME = 1800;
+const REQUIRED_PLAYTIME = 1800; // 30 minutes
 const REQUIRED_PD_GAIN = 3;
 
 let activity = {};
 
 async function sendDiscord(message) {
-    return fetch(DISCORD_WEBHOOK, {
+    await fetch(DISCORD_WEBHOOK, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: message.slice(0, 1900) })
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            content: message.slice(0, 1900)
+        })
     });
 }
 
@@ -24,7 +29,10 @@ async function getGroupMembers() {
     let cursor = "";
 
     do {
-        const url = `https://groups.roblox.com/v1/groups/${GROUP_ID}/users?limit=100${cursor ? `&cursor=${cursor}` : ""}`;
+        const url =
+            `https://groups.roblox.com/v1/groups/${GROUP_ID}/users?limit=100` +
+            (cursor ? `&cursor=${cursor}` : "");
+
         const response = await fetch(url);
 
         if (!response.ok) {
@@ -48,8 +56,53 @@ async function getGroupMembers() {
     return members;
 }
 
+async function runActivityCheck() {
+    const members = await getGroupMembers();
+    let purgeCount = 0;
+
+    for (const member of members) {
+        const data = activity[String(member.userId)];
+
+        if (!data) {
+            purgeCount++;
+
+            await sendDiscord(
+`PLAYER NEEDS TO BE PURGED FOR INACTIVTY!
+USERNAME: ${member.username}
+USERID: ${member.userId}
+PLAYTIME: 0
+PDCountBefore: UNKNOWN
+PDCount: UNKNOWN`
+            );
+
+            continue;
+        }
+
+        const pdGain = data.pdCount - data.pdCountBefore;
+
+        if (data.playtime < REQUIRED_PLAYTIME || pdGain < REQUIRED_PD_GAIN) {
+            purgeCount++;
+
+            await sendDiscord(
+`PLAYER NEEDS TO BE PURGED FOR INACTIVTY!
+USERNAME: ${data.username}
+USERID: ${data.userId}
+PLAYTIME: ${data.playtime}
+PDCountBefore: ${data.pdCountBefore}
+PDCount: ${data.pdCount}`
+            );
+        }
+    }
+
+    if (purgeCount === 0) {
+        await sendDiscord("Everyone passed activity.");
+    }
+
+    activity = {};
+}
+
 app.get("/", (req, res) => {
-    res.status(200).send("Activity system online");
+    res.send("Activity system online");
 });
 
 app.post("/activity", async (req, res) => {
@@ -67,6 +120,7 @@ app.post("/activity", async (req, res) => {
     }
 
     activity[id].username = username;
+    activity[id].userId = id;
     activity[id].playtime = Number(playtime) || 0;
     activity[id].pdCount = Number(pd) || 0;
 
@@ -79,39 +133,30 @@ PDCountBefore: ${activity[id].pdCountBefore}
 PDCount: ${activity[id].pdCount}`
     );
 
-    res.json({ success: true });
+    res.json({
+        success: true
+    });
 });
 
 app.get("/check", async (req, res) => {
-    res.send("Check started. Watch Discord.");
+    res.send("Manual activity check started. Watch Discord.");
 
-    const members = await getGroupMembers();
-    const failed = [];
-
-    for (const member of members) {
-        const data = activity[String(member.userId)];
-
-        if (!data) {
-            failed.push(`USERNAME: ${member.username}\nUSERID: ${member.userId}\nPLAYTIME: 0\nPDCountBefore: UNKNOWN\nPDCount: UNKNOWN`);
-            continue;
-        }
-
-        const pdGain = data.pdCount - data.pdCountBefore;
-
-        if (data.playtime < REQUIRED_PLAYTIME || pdGain < REQUIRED_PD_GAIN) {
-            failed.push(`USERNAME: ${data.username}\nUSERID: ${data.userId}\nPLAYTIME: ${data.playtime}\nPDCountBefore: ${data.pdCountBefore}\nPDCount: ${data.pdCount}`);
-        }
+    try {
+        await runActivityCheck();
+    } catch (error) {
+        console.error("Manual check failed:", error);
     }
+});
 
-    if (failed.length === 0) {
-        await sendDiscord("Everyone passed activity.");
-    } else {
-        for (const chunk of failed) {
-            await sendDiscord(`PLAYER NEEDS TO BE PURGED FOR INACTIVTY!\n${chunk}`);
-        }
+// every 3 days at midnight
+cron.schedule("0 0 */3 * *", async () => {
+    console.log("Running automatic 3-day activity check");
+
+    try {
+        await runActivityCheck();
+    } catch (error) {
+        console.error("Automatic check failed:", error);
     }
-
-    activity = {};
 });
 
 const PORT = process.env.PORT || 3000;
