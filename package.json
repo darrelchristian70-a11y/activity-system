@@ -1,7 +1,7 @@
 {
   "name": "activity-system",
   "version": "1.0.0",
-  "description": "Roblox activity tracker",
+  "description": "Roblox group activity system",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
