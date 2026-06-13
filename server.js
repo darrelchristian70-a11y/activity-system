@@ -4,7 +4,8 @@ const cron = require("node-cron");
 const app = express();
 app.use(express.json());
 
-const DISCORD_WEBHOOK = "YOUR_WEBHOOK_HERE";
+const DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1515384597133660303/zskDPHYYGhnKF1rUngtG88IrejZwqaslw06TrQwuxuaksuJzXlQD2AuZhOyCqbL8fc-J";
+
 const GROUP_ID = "15038532";
 
 const REQUIRED_PLAYTIME = 1800; // 30 minutes
@@ -29,9 +30,7 @@ async function getGroupMembers() {
     let cursor = "";
 
     do {
-        const url =
-            `https://groups.roblox.com/v1/groups/${GROUP_ID}/users?limit=100` +
-            (cursor ? `&cursor=${cursor}` : "");
+        const url = `https://groups.roblox.com/v1/groups/${GROUP_ID}/users?limit=100${cursor ? `&cursor=${cursor}` : ""}`;
 
         const response = await fetch(url);
 
@@ -58,18 +57,19 @@ async function getGroupMembers() {
 
 async function runActivityCheck() {
     const members = await getGroupMembers();
-    let purgeCount = 0;
+    let failedCount = 0;
 
     for (const member of members) {
-        const data = activity[String(member.userId)];
+        const id = String(member.userId);
+        const data = activity[id];
 
         if (!data) {
-            purgeCount++;
+            failedCount++;
 
             await sendDiscord(
 `PLAYER NEEDS TO BE PURGED FOR INACTIVTY!
 USERNAME: ${member.username}
-USERID: ${member.userId}
+USERID: ${id}
 PLAYTIME: 0
 PDCountBefore: UNKNOWN
 PDCount: UNKNOWN`
@@ -81,12 +81,12 @@ PDCount: UNKNOWN`
         const pdGain = data.pdCount - data.pdCountBefore;
 
         if (data.playtime < REQUIRED_PLAYTIME || pdGain < REQUIRED_PD_GAIN) {
-            purgeCount++;
+            failedCount++;
 
             await sendDiscord(
 `PLAYER NEEDS TO BE PURGED FOR INACTIVTY!
 USERNAME: ${data.username}
-USERID: ${data.userId}
+USERID: ${id}
 PLAYTIME: ${data.playtime}
 PDCountBefore: ${data.pdCountBefore}
 PDCount: ${data.pdCount}`
@@ -94,7 +94,7 @@ PDCount: ${data.pdCount}`
         }
     }
 
-    if (purgeCount === 0) {
+    if (failedCount === 0) {
         await sendDiscord("Everyone passed activity.");
     }
 
@@ -121,7 +121,7 @@ app.post("/activity", async (req, res) => {
 
     activity[id].username = username;
     activity[id].userId = id;
-    activity[id].playtime = Number(playtime) || 0;
+    activity[id].playtime += Number(playtime) || 0;
     activity[id].pdCount = Number(pd) || 0;
 
     await sendDiscord(
@@ -139,23 +139,23 @@ PDCount: ${activity[id].pdCount}`
 });
 
 app.get("/check", async (req, res) => {
-    res.send("Manual activity check started. Watch Discord.");
+    res.send("Manual check started. Watch Discord.");
 
     try {
         await runActivityCheck();
     } catch (error) {
-        console.error("Manual check failed:", error);
+        console.error(error);
     }
 });
 
-// every 3 days at midnight
+// automatic check every 3 days at midnight
 cron.schedule("0 0 */3 * *", async () => {
     console.log("Running automatic 3-day activity check");
 
     try {
         await runActivityCheck();
     } catch (error) {
-        console.error("Automatic check failed:", error);
+        console.error("Automatic activity check failed:", error);
     }
 });
 
