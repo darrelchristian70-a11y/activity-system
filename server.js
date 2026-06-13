@@ -1,54 +1,102 @@
 const express = require("express");
 
 const app = express();
-
 app.use(express.json());
 
 const DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1515384597133660303/zskDPHYYGhnKF1rUngtG88IrejZwqaslw06TrQwuxuaksuJzXlQD2AuZhOyCqbL8fc-J";
 
+const REQUIRED_PLAYTIME = 1800; // 30 minutes
+const REQUIRED_PD_GAIN = 3;
+
+let activity = {};
+
+async function sendDiscord(message) {
+await fetch(DISCORD_WEBHOOK, {
+method: "POST",
+headers: {
+"Content-Type": "application/json"
+},
+body: JSON.stringify({
+content: message
+})
+});
+}
+
 app.get("/", (req, res) => {
-    res.send("Activity system online");
+res.send("Activity system online");
 });
 
 app.post("/activity", async (req, res) => {
-    const { username, userId, playtime, pd } = req.body;
+const { username, userId, playtime, pd } = req.body;
 
-    console.log("Activity received:", req.body);
+```
+if (!activity[userId]) {
+    activity[userId] = {
+        username,
+        userId,
+        playtime: 0,
+        pdCountBefore: pd,
+        pdCount: pd
+    };
+}
 
-    try {
-        await fetch(DISCORD_WEBHOOK, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-                content:
-`🟢 Activity Received
+activity[userId].username = username;
+activity[userId].playtime = playtime;
+activity[userId].pdCount = pd;
 
-Username: ${username}
-UserId: ${userId}
-Playtime: ${playtime} seconds
+await sendDiscord(
+```
+
+`ACTIVITY RECIEVED
+USERNAME: ${username}
+USERID: ${userId}
+PLAYTIME: ${playtime}
+PDCountBefore: ${activity[userId].pdCountBefore}
 PDCount: ${pd}`
-            })
-        });
+);
 
-        res.json({
-            success: true,
-            message: "Sent to Discord"
-        });
+```
+res.json({
+    success: true
+});
+```
 
-    } catch (err) {
-        console.error("Webhook error:", err);
+});
 
-        res.status(500).json({
-            success: false,
-            message: "Failed to send webhook"
-        });
-    }
+app.get("/check", async (req, res) => {
+for (const userId in activity) {
+const data = activity[userId];
+
+```
+    const pdGain = data.pdCount - data.pdCountBefore;
+
+    if (
+        data.playtime < REQUIRED_PLAYTIME ||
+        pdGain < REQUIRED_PD_GAIN
+    ) {
+        await sendDiscord(
+```
+
+`PLAYER NEEDS TO BE PURGED FOR INACTIVTY!
+USERNAME: ${data.username}
+USERID: ${data.userId}
+PLAYTIME: ${data.playtime}
+PDCountBefore: ${data.pdCountBefore}
+PDCount: ${data.pdCount}`
+);
+}
+}
+
+```
+activity = {};
+
+res.send("Activity checked and reset.");
+```
+
 });
 
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
-    console.log(`Running on port ${PORT}`);
+console.log(`Running on port ${PORT}`);
 });
