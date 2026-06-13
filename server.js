@@ -5,14 +5,11 @@ app.use(express.json());
 
 const DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1515384597133660303/zskDPHYYGhnKF1rUngtG88IrejZwqaslw06TrQwuxuaksuJzXlQD2AuZhOyCqbL8fc-J";
 
-const REQUIRED_PLAYTIME = 1800; // 30 minutes
-const REQUIRED_PD_GAIN = 3;
+const ROBLOX_API_KEY = process.env.ROBLOX_API_KEY;
+const GROUP_ID = process.env.GROUP_ID || "15038532";
 
-// PUT ALL GROUP MEMBERS HERE
-const GROUP_MEMBERS = [
-    { username: "ExamplePlayer1", userId: 123456789 },
-    { username: "ExamplePlayer2", userId: 987654321 }
-];
+const REQUIRED_PLAYTIME = 1800;
+const REQUIRED_PD_GAIN = 3;
 
 let activity = {};
 
@@ -28,6 +25,78 @@ async function sendDiscord(message) {
     });
 }
 
+async function getGroupMembers() {
+    if (!ROBLOX_API_KEY) {
+        throw new Error("Missing ROBLOX_API_KEY in Railway Variables.");
+    }
+
+    let members = [];
+    let pageToken = "";
+
+    do {
+        const url =
+            `https://apis.roblox.com/cloud/v2/groups/${GROUP_ID}/memberships` +
+            `?maxPageSize=100` +
+            (pageToken ? `&pageToken=${pageToken}` : "");
+
+        const response = await fetch(url, {
+            method: "GET",
+            headers: {
+                "x-api-key": ROBLOX_API_KEY
+            }
+        });
+
+        const text = await response.text();
+
+        if (!response.ok) {
+            console.log("Roblox API error:", response.status, text);
+            throw new Error("Failed to fetch group members.");
+        }
+
+        const json = JSON.parse(text);
+
+        const list = json.groupMemberships || json.memberships || [];
+
+        for (const membership of list) {
+            const user =
+                membership.user ||
+                membership.path ||
+                membership.robloxUser ||
+                membership;
+
+            let userId =
+                membership.userId ||
+                membership.user?.id ||
+                membership.user?.userId ||
+                membership.robloxUser?.id;
+
+            let username =
+                membership.username ||
+                membership.user?.name ||
+                membership.robloxUser?.name ||
+                `User_${userId}`;
+
+            if (!userId && typeof user === "string") {
+                const match = user.match(/users\/(\d+)/);
+                if (match) {
+                    userId = match[1];
+                }
+            }
+
+            if (userId) {
+                members.push({
+                    userId: String(userId),
+                    username: username || `User_${userId}`
+                });
+            }
+        }
+
+        pageToken = json.nextPageToken || "";
+    } while (pageToken);
+
+    return members;
+}
+
 app.get("/", (req, res) => {
     res.send("Activity system online");
 });
@@ -39,77 +108,82 @@ app.post("/activity", async (req, res) => {
     if (!activity[id]) {
         activity[id] = {
             username,
-            userId,
+            userId: id,
             playtime: 0,
-            pdCountBefore: pd,
-            pdCount: pd
+            pdCountBefore: Number(pd) || 0,
+            pdCount: Number(pd) || 0
         };
     }
 
     activity[id].username = username;
-    activity[id].userId = userId;
-    activity[id].playtime = playtime;
-    activity[id].pdCount = pd;
+    activity[id].userId = id;
+    activity[id].playtime = Number(playtime) || 0;
+    activity[id].pdCount = Number(pd) || 0;
 
     await sendDiscord(
 `ACTIVITY RECIEVED
 USERNAME: ${username}
-USERID: ${userId}
-PLAYTIME: ${playtime}
+USERID: ${id}
+PLAYTIME: ${activity[id].playtime}
 PDCountBefore: ${activity[id].pdCountBefore}
-PDCount: ${pd}`
+PDCount: ${activity[id].pdCount}`
     );
 
-    res.json({
-        success: true
-    });
+    res.json({ success: true });
 });
 
 app.get("/check", async (req, res) => {
-    let purgeCount = 0;
+    try {
+        const members = await getGroupMembers();
+        let purgeCount = 0;
 
-    for (const member of GROUP_MEMBERS) {
-        const id = String(member.userId);
-        const data = activity[id];
+        for (const member of members) {
+            const id = String(member.userId);
+            const data = activity[id];
 
-        if (!data) {
-            purgeCount++;
+            if (!data) {
+                purgeCount++;
 
-            await sendDiscord(
+                await sendDiscord(
 `PLAYER NEEDS TO BE PURGED FOR INACTIVTY!
 USERNAME: ${member.username}
-USERID: ${member.userId}
+USERID: ${id}
 PLAYTIME: 0
 PDCountBefore: UNKNOWN
 PDCount: UNKNOWN`
-            );
+                );
 
-            continue;
-        }
+                continue;
+            }
 
-        const pdGain = data.pdCount - data.pdCountBefore;
+            const pdGain = data.pdCount - data.pdCountBefore;
 
-        if (data.playtime < REQUIRED_PLAYTIME || pdGain < REQUIRED_PD_GAIN) {
-            purgeCount++;
+            if (data.playtime < REQUIRED_PLAYTIME || pdGain < REQUIRED_PD_GAIN) {
+                purgeCount++;
 
-            await sendDiscord(
+                await sendDiscord(
 `PLAYER NEEDS TO BE PURGED FOR INACTIVTY!
 USERNAME: ${data.username}
-USERID: ${data.userId}
+USERID: ${id}
 PLAYTIME: ${data.playtime}
 PDCountBefore: ${data.pdCountBefore}
 PDCount: ${data.pdCount}`
-            );
+                );
+            }
         }
+
+        if (purgeCount === 0) {
+            await sendDiscord("Everyone passed activity.");
+        }
+
+        activity = {};
+
+        res.send(`Activity checked. ${purgeCount} player(s) need purge.`);
+    } catch (error) {
+        console.error(error);
+
+        res.status(500).send(error.message);
     }
-
-    if (purgeCount === 0) {
-        await sendDiscord("Everyone passed activity.");
-    }
-
-    activity = {};
-
-    res.send(`Activity checked. ${purgeCount} player(s) need purge.`);
 });
 
 const PORT = process.env.PORT || 3000;
